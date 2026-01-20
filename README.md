@@ -20,8 +20,12 @@ npm install
 
 2. **Set up environment:**
 ```bash
+# Copy the example file
 cp .env.example .env.local
-# Edit .env.local with your keys
+
+# Edit .env.local and add your Supabase anon key:
+# - Get it from: Supabase Dashboard → Settings → API → anon public
+# - Replace "your-anon-key-here" with your actual key
 ```
 
 3. **Start local development:**
@@ -55,78 +59,6 @@ Access at: `http://localhost:5173`
 
 ## Deployment
 
-### Frontend (Vercel)
-
-#### Option 1: Deploy via Vercel Dashboard (Recommended)
-
-1. **Push code to GitHub:**
-   ```bash
-   git add .
-   git commit -m "Ready for deployment"
-   git push origin main
-   ```
-
-2. **Connect to Vercel:**
-   - Go to [vercel.com](https://vercel.com) and sign in
-   - Click "Add New..." → "Project"
-   - Import your GitHub repository
-   - Vercel will auto-detect Vite framework
-
-3. **Configure Build Settings:**
-   - Framework Preset: **Vite** (auto-detected)
-   - Root Directory: `./` (default)
-   - Build Command: `npm run build` (auto-detected)
-   - Output Directory: `dist` (auto-detected)
-   - Install Command: `npm install` (auto-detected)
-
-4. **Set Environment Variables:**
-   - Go to Project Settings → Environment Variables
-   - Add:
-     - `VITE_SUPABASE_URL` = Your Supabase project URL
-     - `VITE_SUPABASE_ANON_KEY` = Your Supabase anon key
-   - Click "Save"
-
-5. **Deploy:**
-   - Click "Deploy"
-   - Wait for build to complete
-   - Your app will be live at `https://your-project.vercel.app`
-
-#### Option 2: Deploy via Vercel CLI
-
-1. **Install Vercel CLI:**
-   ```bash
-   npm i -g vercel
-   ```
-
-2. **Login:**
-   ```bash
-   vercel login
-   ```
-
-3. **Deploy:**
-   ```bash
-   vercel
-   ```
-
-4. **Set environment variables:**
-   ```bash
-   vercel env add VITE_SUPABASE_URL
-   vercel env add VITE_SUPABASE_ANON_KEY
-   ```
-
-5. **Deploy to production:**
-   ```bash
-   vercel --prod
-   ```
-
-#### Post-Deployment Checklist
-
-- ✅ Verify app loads at your Vercel URL
-- ✅ Test login functionality
-- ✅ Test file upload
-- ✅ Check browser console for errors
-- ✅ Update CORS settings in Supabase (add your Vercel domain)
-
 ### Backend (Supabase)
 ```bash
 supabase functions deploy upload
@@ -149,7 +81,7 @@ See [DOCUMENTATION.md](./DOCUMENTATION.md) for complete documentation.
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS
 - **Backend:** Supabase (PostgreSQL, Edge Functions)
 - **AI:** Google Gemini API
-- **Hosting:** Vercel (frontend), Supabase Cloud (backend)
+- **Hosting:** Supabase Cloud (backend)
 
 ## Features
 

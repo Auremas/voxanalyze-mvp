@@ -14,12 +14,29 @@ function getCorsHeaders(req: Request): Record<string, string> {
   const allowedOrigins = Deno.env.get('ALLOWED_ORIGINS')?.split(',') || [];
   const origin = req.headers.get('Origin');
   
+  // Always allow localhost for local development
+  const isLocalhost = origin && (
+    origin.startsWith('http://localhost:') ||
+    origin.startsWith('http://127.0.0.1:') ||
+    origin.startsWith('http://0.0.0.0:')
+  );
+  
   // If no allowed origins configured, allow all (development mode)
   if (allowedOrigins.length === 0) {
     return {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    };
+  }
+  
+  // Allow localhost even when ALLOWED_ORIGINS is set (for local development)
+  if (isLocalhost) {
+    return {
+      'Access-Control-Allow-Origin': origin || '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      'Access-Control-Allow-Credentials': 'true',
     };
   }
   
