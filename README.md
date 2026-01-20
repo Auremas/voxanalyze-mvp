@@ -92,7 +92,3 @@ See [DOCUMENTATION.md](./DOCUMENTATION.md) for complete documentation.
 - ✅ Compliance warnings
 - ✅ Privacy-protected summaries
 - ✅ Security audit (admin)
-
-## License
-
-[Your License Here]
