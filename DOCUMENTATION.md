@@ -283,13 +283,13 @@ All endpoints require authentication and are secured with Row Level Security pol
 
 Potential improvements for future versions:
 
-- Multi-language support (beyond Lithuanian)
 - Real-time call analysis (during live calls)
 - Integration with CRM systems
 - Advanced reporting and analytics
-- Mobile app version
 - Custom scoring criteria
 - Automated alerts for critical issues
+- Everything in one environment for better speed
+- More optimised prompt for AI
 
 ---
 
@@ -298,11 +298,7 @@ Potential improvements for future versions:
 ### For Technical Issues
 - Check Supabase Dashboard → Functions → Logs
 - Review browser console (F12) for errors
-- Contact development team
 
-### For Feature Requests
-- Submit through project management system
-- Discuss with development team
 
 ---
 
