@@ -1,0 +1,16 @@
+# Supabase Edge Functions configuration
+
+[functions.upload]
+verify_jwt = false
+
+[functions.transcription]
+verify_jwt = false
+
+[functions.analysis]
+verify_jwt = false
+
+[functions.security-audit]
+verify_jwt = false
+
+[functions.delete-record]
+verify_jwt = false
