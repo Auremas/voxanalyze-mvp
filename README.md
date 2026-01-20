@@ -53,18 +53,6 @@ Access at: `http://localhost:5173`
 - `npm run supabase:start` - Start local Supabase
 - `npm run supabase:stop` - Stop local Supabase
 
-## Deployment
-
-
-
-#### Post-Deployment Checklist
-
-- ✅ Verify app loads at your Vercel URL
-- ✅ Test login functionality
-- ✅ Test file upload
-- ✅ Check browser console for errors
-- ✅ Update CORS settings in Supabase (add your Vercel domain)
-
 ### Backend (Supabase)
 ```bash
 supabase functions deploy upload
