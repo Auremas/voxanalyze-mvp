@@ -534,6 +534,7 @@ export const fetchTranscriptionViaEdgeFunction = async (recordId: string): Promi
     method: 'GET',
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
     },
   });
 
@@ -571,6 +572,7 @@ export const fetchAnalysisViaEdgeFunction = async (recordId: string): Promise<An
     method: 'GET',
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
     },
   });
 

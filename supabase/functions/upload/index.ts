@@ -453,8 +453,8 @@ PRIEŠINGAI NEGALIMA:
           }
         });
 
-        // Retry on transient overload (503) a few times before giving up / switching models.
-        const maxAttemptsPerModel = 3;
+        // Retry on transient overload (503) once before switching models (reduced from 3 to avoid timeouts).
+        const maxAttemptsPerModel = 1;
         for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
           if (attempt > 0) {
             const wait = backoffMs(attempt - 1);
@@ -973,7 +973,8 @@ Grąžink JSON su šiais laukais:
           }
         });
 
-        const maxAttemptsPerModel = 3;
+        // Reduced retries from 3 to 1 to avoid 504 timeouts
+        const maxAttemptsPerModel = 1;
         for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
           if (attempt > 0) {
             const wait = backoffMs(attempt - 1);
