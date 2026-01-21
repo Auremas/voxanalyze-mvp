@@ -85,6 +85,7 @@ supabase functions deploy security-audit
 Set secrets in Supabase Dashboard:
 - `GEMINI_API_KEY`
 - `ENCRYPTION_KEY`
+- `ALLOWED_ORIGINS` (comma-separated URLs: `https://yourdomain.com,http://localhost:5173`)
 
 ## Documentation
 
@@ -99,10 +100,13 @@ See [DOCUMENTATION.md](./DOCUMENTATION.md) for complete documentation.
 
 ## Features
 
+- ✅ Fast audio upload (no processing delays)
+- ✅ Manual transcription generation (on-demand)
+- ✅ Manual analysis generation (after transcription)
 - ✅ Audio transcription with speaker identification
 - ✅ AI-powered sentiment analysis
 - ✅ Customer satisfaction scoring
 - ✅ Agent performance evaluation
-- ✅ Compliance warnings
-- ✅ Privacy-protected summaries
+- ✅ Compliance warnings (behavioral only, ignores transcription errors)
+- ✅ Privacy-protected summaries (preserves clinic/hospital names)
 - ✅ Security audit (admin)

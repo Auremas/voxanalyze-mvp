@@ -65,13 +65,17 @@ The system analyzes each call and provides:
 ### Simple Flow
 
 ```
-1. User uploads audio file
+1. User uploads audio file (fast, saves to storage)
    ↓
-2. System transcribes audio to text
+2. User clicks "Generuoti transkripciją" button
    ↓
-3. AI analyzes the conversation
+3. System transcribes audio to text
    ↓
-4. Results displayed in dashboard
+4. User clicks "Generuoti analizę" button
+   ↓
+5. AI analyzes the conversation
+   ↓
+6. Results displayed in dashboard
 ```
 
 ### Technical Architecture (Simplified)
@@ -132,9 +136,19 @@ The system analyzes each call and provides:
 2. **Upload Audio**
    - Go to "Garso įkėlimas" (Audio Upload) tab
    - Drag and drop your audio file or click to select
-   - Wait for processing (usually 1-3 minutes)
+   - Wait for upload to complete (usually a few seconds)
+   - You'll see "Failas įkeltas" (File uploaded) message
 
-3. **View Results**
+3. **Generate Transcription**
+   - After upload, go to "Analizės skydelis" (Dashboard) tab
+   - Click "Generuoti transkripciją" (Generate Transcription) button
+   - Wait for transcription (usually 1-3 minutes)
+
+4. **Generate Analysis**
+   - After transcription is ready, click "Generuoti analizę" (Generate Analysis) button
+   - Wait for analysis (usually 30-60 seconds)
+
+5. **View Results**
    - Go to "Istorija" (History) tab
    - Click on any call record
    - Review transcription, scores, and analysis
@@ -201,13 +215,15 @@ All endpoints require authentication and are secured with Row Level Security pol
 
 ### Data Protection
 - ✅ Server-side encryption of sensitive data
-- ✅ Automatic removal of personal information from summaries
+- ✅ Automatic removal of personal information from summaries (names, phones, emails)
+- ✅ Clinic/hospital names preserved in summaries (for context)
 - ✅ User-based access control (users see only their data)
 - ✅ Secure authentication (JWT tokens)
 - ✅ HTTPS encryption for all connections
 
 ### Privacy Compliance
-- ✅ No personal data in summaries (names, phones, emails removed)
+- ✅ Personal data redacted from summaries (names, phones, emails removed)
+- ✅ Institution names preserved (clinics, hospitals, companies)
 - ✅ Encrypted storage
 - ✅ Access logging
 - ✅ GDPR-friendly design
@@ -260,12 +276,22 @@ All endpoints require authentication and are secured with Row Level Security pol
 ### Common Issues
 
 **Upload Fails**
-- Check file size (max 12MB recommended)
+- Check file size (max 8MB recommended)
 - Verify internet connection
+- Upload is fast and should complete in seconds
+
+**Transcription Generation Fails**
+- Check file size (max 8MB)
 - Try again after a few minutes (AI service may be busy)
+- System automatically retries with different models
+
+**Analysis Generation Fails**
+- Ensure transcription was generated first
+- Check that transcription is visible in dashboard
+- Try again if it fails (may be temporary AI service issue)
 
 **Transcription Shows Only One Speaker**
-- Re-upload the file (dialogue detection improved)
+- Re-generate transcription (dialogue detection improved)
 - Ensure audio quality is good
 
 **Can't See My Records**
