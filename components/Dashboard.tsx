@@ -25,9 +25,13 @@ import { CallRecord } from '../types';
 
 interface DashboardProps {
   record: CallRecord;
+  onGenerateAnalysis?: () => void;
+  isGeneratingAnalysis?: boolean;
+  onGenerateTranscription?: () => void;
+  isGeneratingTranscription?: boolean;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ record }) => {
+const Dashboard: React.FC<DashboardProps> = ({ record, onGenerateAnalysis, isGeneratingAnalysis, onGenerateTranscription, isGeneratingTranscription }) => {
   const { analysis, transcription, status, error } = record;
 
   // Show loading state with progress bar
@@ -111,6 +115,120 @@ const Dashboard: React.FC<DashboardProps> = ({ record }) => {
             <p className="text-red-700">{error || 'Įvyko nežinoma klaida'}</p>
             <p className="text-sm text-red-600 mt-4">Patikrinkite konsolę (F12) dėl daugiau informacijos.</p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If upload returned without transcription (upload-only mode), show a CTA.
+  if (!transcription && !analysis) {
+    return (
+      <div className="space-y-8 animate-in fade-in duration-700">
+        <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6">
+          <div className="flex items-start gap-4">
+            <AlertCircle className="w-6 h-6 text-slate-600 flex-shrink-0 mt-1" />
+            <div>
+              <h3 className="text-lg font-black text-slate-900 mb-1">Failas įkeltas</h3>
+              <p className="text-slate-600 text-sm font-medium">
+                Toliau galite rankiniu būdu paleisti transkripciją, o po to – analizę (tai sumažina 546/504 klaidų tikimybę).
+              </p>
+              {onGenerateTranscription && (
+                <button
+                  onClick={onGenerateTranscription}
+                  disabled={!!isGeneratingTranscription}
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingTranscription ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generuojama transkripcija...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      Generuoti transkripciją
+                    </>
+                  )}
+                </button>
+              )}
+              {onGenerateAnalysis && (
+                <p className="text-xs text-slate-500 mt-3">
+                  Analizė bus pasiekiama tik po transkripcijos.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If transcription exists but analysis is missing, show transcription and a friendly message.
+  if (transcription && !analysis) {
+    return (
+      <div className="space-y-8 animate-in fade-in duration-700">
+        <div className="bg-amber-50 border border-amber-200 rounded-3xl p-6">
+          <div className="flex items-start gap-4">
+            <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-1" />
+            <div>
+              <h3 className="text-lg font-black text-amber-900 mb-1">Analizė dar negeneruota</h3>
+              <p className="text-amber-800 text-sm font-medium">
+                Kad sumažintume 546/504 klaidas, įkėlimo metu pirmiausia išsaugome transkripciją, o analizę galima generuoti atskirai.
+              </p>
+              {onGenerateAnalysis && (
+                <button
+                  onClick={onGenerateAnalysis}
+                  disabled={!!isGeneratingAnalysis}
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingAnalysis ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generuojama analizė...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      Generuoti analizę
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-8">
+          <h3 className="text-xl font-bold text-slate-800 mb-6">Transkripcijos peržiūra</h3>
+          {transcription.segments && transcription.segments.length > 0 ? (
+            <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+              {transcription.segments
+                .filter(seg => seg.text && seg.text.trim().length > 0)
+                .map((seg, i) => (
+                  <div key={i} className="p-4 rounded-2xl border bg-slate-50 border-slate-100">
+                    <span className="text-[10px] font-black uppercase tracking-widest mb-2 block text-slate-500">
+                      {seg.speaker || 'Kalbėtojas'}
+                    </span>
+                    <p className="text-sm text-slate-700 leading-relaxed font-medium whitespace-pre-wrap break-words">
+                      {seg.text}
+                    </p>
+                  </div>
+                ))}
+            </div>
+          ) : transcription.text ? (
+            <div className="p-4 rounded-2xl border bg-slate-50 border-slate-100">
+              <span className="text-[10px] font-black uppercase tracking-widest mb-2 block text-slate-500">
+                Pilna transkripcija
+              </span>
+              <p className="text-sm text-slate-700 leading-relaxed font-medium whitespace-pre-wrap break-words">
+                {transcription.text}
+              </p>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-slate-500 text-sm">Transkripcijos duomenų nėra</p>
+            </div>
+          )}
         </div>
       </div>
     );

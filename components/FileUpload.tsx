@@ -9,12 +9,24 @@ interface FileUploadProps {
 }
 
 const FileUpload: React.FC<FileUploadProps> = ({ onUpload, isProcessing, onMultipleUpload }) => {
+  const disableEdgeFunctions =
+    (import.meta as any)?.env?.VITE_DISABLE_EDGE_FUNCTIONS === 'true';
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isProcessingRef = useRef(false); // Prevent duplicate calls
 
   const handleFiles = async (files: FileList | File[]) => {
+    if (disableEdgeFunctions) {
+      setError(
+        'Vietinis režimas: Edge Functions išjungtos (VITE_DISABLE_EDGE_FUNCTIONS=true). ' +
+          'Įkėlimui + transkripcijai + analizei reikia Supabase Edge Functions. ' +
+          'Išjunkite šį nustatymą arba paleiskite Edge Functions.'
+      );
+      return;
+    }
+
     // Prevent double-processing
     if (isProcessingRef.current || isProcessing) {
       console.warn('⚠️ Upload already in progress, ignoring duplicate call');
@@ -88,9 +100,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUpload, isProcessing, onMulti
       <div 
         className={`relative border-2 border-dashed rounded-2xl p-12 transition-all duration-300 flex flex-col items-center justify-center cursor-pointer
           ${dragActive ? 'border-indigo-500 bg-indigo-50/50 scale-[1.01]' : 'border-slate-300 hover:border-indigo-400 bg-white'}
-          ${isProcessing ? 'opacity-70 pointer-events-none' : ''}`}
+          ${isProcessing || disableEdgeFunctions ? 'opacity-70 pointer-events-none' : ''}`}
         onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
-        onClick={() => !isProcessing && fileInputRef.current?.click()}
+        onClick={() => !isProcessing && !disableEdgeFunctions && fileInputRef.current?.click()}
       >
         <input 
           type="file" 
@@ -112,6 +124,19 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUpload, isProcessing, onMulti
             <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
             <p className="text-xl font-bold text-slate-800">Analizuojamas skambutis...</p>
             <p className="text-slate-500 mt-2">Atliekama transkripcija ir DI vertinimas</p>
+          </div>
+        ) : disableEdgeFunctions ? (
+          <div className="flex flex-col items-center">
+            <div className="w-20 h-20 bg-slate-100 rounded-2xl flex items-center justify-center mb-6 shadow-inner">
+              <AlertCircle className="w-10 h-10 text-slate-500" />
+            </div>
+            <h3 className="text-2xl font-bold text-slate-800 mb-2">Įkėlimas išjungtas (vietinis režimas)</h3>
+            <p className="text-slate-500 text-center max-w-sm mb-4">
+              Norint įkelti ir apdoroti skambučius reikia Supabase Edge Functions.
+            </p>
+            <p className="text-slate-500 text-center max-w-sm">
+              Sprendimai: nustatykite <span className="font-mono">VITE_DISABLE_EDGE_FUNCTIONS=false</span> arba paleiskite Edge Functions.
+            </p>
           </div>
         ) : (
           <>

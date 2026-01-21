@@ -41,13 +41,19 @@ const isSupabaseAvailable = () => {
   return supabase !== null && supabaseUrl !== '' && supabaseAnonKey !== '';
 };
 
+// Local/dev helper: allow running the UI without Edge Functions.
+// When enabled, we avoid calling /functions/v1/* and read from DB directly where possible.
+const disableEdgeFunctions =
+  (import.meta as any)?.env?.VITE_DISABLE_EDGE_FUNCTIONS === 'true';
+
 // Export function to check Supabase status (for debugging)
 export const checkSupabaseConnection = () => {
   return {
     configured: isSupabaseAvailable(),
     url: supabaseUrl ? 'Set' : 'Missing',
     key: supabaseAnonKey ? 'Set' : 'Missing',
-    client: supabase !== null ? 'Initialized' : 'Not initialized'
+    client: supabase !== null ? 'Initialized' : 'Not initialized',
+    edgeFunctions: disableEdgeFunctions ? 'Disabled (local mode)' : 'Enabled'
   };
 };
 
@@ -58,6 +64,14 @@ export const checkSupabaseConnection = () => {
 export const uploadAndProcessViaEdgeFunction = async (file: File): Promise<CallRecord> => {
   if (!isSupabaseAvailable() || !supabase) {
     throw new Error('Supabase not configured');
+  }
+
+  if (disableEdgeFunctions) {
+    throw new Error(
+      'Local mode: Edge Functions are disabled (VITE_DISABLE_EDGE_FUNCTIONS=true). ' +
+        'Upload+transcription+analysis requires Supabase Edge Functions. ' +
+        'Turn the flag off to process uploads.'
+    );
   }
 
   // Get session token for Authorization header (Edge Function requires auth)
@@ -164,7 +178,7 @@ export const uploadAndProcessViaEdgeFunction = async (file: File): Promise<CallR
       throw fetchErr;
     }
   } catch (e: any) {
-    console.error('❌ Upload fetch error:', {
+    console.error('❌ Upload fetch error (after retries):', {
       name: e?.name,
       message: e?.message,
       stack: e?.stack?.substring(0, 200),
@@ -235,6 +249,7 @@ export const uploadAndProcessViaEdgeFunction = async (file: File): Promise<CallR
     const isWorkerLimit = res.status === 546;
     const isOverloaded = res.status === 503;
     const isQuota = res.status === 429;
+    const isGatewayTimeout = res.status === 504;
     const workerLimitHint =
       `Supabase Edge Function pasiekė resursų limitą (546) — dažniausiai tai reiškia, kad failas per didelis arba apdorojimas užtruko per ilgai.\n` +
       `Pabandykite:\n` +
@@ -246,6 +261,16 @@ export const uploadAndProcessViaEdgeFunction = async (file: File): Promise<CallR
       `Jei kartojasi: pabandykite mažesnį audio arba vėliau (piko metu būna dažniau).\n`;
     const quotaHint =
       `Gemini API kvotos limitas (429). Patikrinkite Gemini billing/quotas ir bandykite po kelių minučių.\n`;
+    const gatewayTimeoutHint =
+      `Gateway timeout (504) — Edge Function užtruko per ilgai. Tai gali būti dėl:\n` +
+      `- Per didelio audio failo\n` +
+      `- Lėto tinklo ryšio\n` +
+      `- Perkrauto Gemini API\n` +
+      `\n` +
+      `Pabandykite:\n` +
+      `- Mažesnį audio failą\n` +
+      `- Pakartoti po kelių minučių\n` +
+      `- Patikrinti Supabase Dashboard → Functions → upload → Logs\n`;
 
     console.error('Edge Function upload error:', {
       status: res.status,
@@ -254,7 +279,12 @@ export const uploadAndProcessViaEdgeFunction = async (file: File): Promise<CallR
       rawPreview: rawText.slice(0, 300),
     });
 
-    throw new Error(isWorkerLimit ? workerLimitHint : (isOverloaded ? overloadedHint : (isQuota ? quotaHint : errMsg)));
+    throw new Error(
+      isWorkerLimit ? workerLimitHint :
+      (isOverloaded ? overloadedHint :
+      (isQuota ? quotaHint :
+      (isGatewayTimeout ? gatewayTimeoutHint : errMsg)))
+    );
   }
 
   // If response only contains metadata (to prevent stack overflow), fetch full record from DB
@@ -458,12 +488,17 @@ export const fetchCallRecords = async (limit: number = 50): Promise<CallRecord[]
     let transcription: any = undefined;
     if (row.transcription) {
       if (row.transcription.encrypted && row.transcription.data) {
-        // Encrypted transcription - fetch via Edge Function for decryption
-        try {
-          transcription = await fetchTranscriptionViaEdgeFunction(row.id);
-        } catch (err: any) {
-          console.warn('⚠️ Failed to fetch decrypted transcription via Edge Function:', err.message);
+        if (disableEdgeFunctions) {
+          // Cannot decrypt on the client. Keep UI running, but hide transcription.
           transcription = undefined;
+        } else {
+          // Encrypted transcription - fetch via Edge Function for decryption
+          try {
+            transcription = await fetchTranscriptionViaEdgeFunction(row.id);
+          } catch (err: any) {
+            console.warn('⚠️ Failed to fetch decrypted transcription via Edge Function:', err.message);
+            transcription = undefined;
+          }
         }
       } else {
         transcription = {
@@ -479,11 +514,25 @@ export const fetchCallRecords = async (limit: number = 50): Promise<CallRecord[]
     // Fetch analysis via Edge Function to generate logs (even though it's not encrypted)
     let analysis: any = undefined;
     if (row.analysis) {
-      try {
-        analysis = await fetchAnalysisViaEdgeFunction(row.id);
-      } catch (err: any) {
-        console.warn('⚠️ Failed to fetch analysis via Edge Function, using DB data:', err.message);
-        // Fallback to DB data if Edge Function fails
+      if (!disableEdgeFunctions) {
+        try {
+          analysis = await fetchAnalysisViaEdgeFunction(row.id);
+        } catch (err: any) {
+          console.warn('⚠️ Failed to fetch analysis via Edge Function, using DB data:', err.message);
+          // Fallback to DB data if Edge Function fails
+          analysis = {
+            id: row.analysis.id,
+            sentimentScore: row.analysis.sentimentScore,
+            customerSatisfaction: row.analysis.customerSatisfaction,
+            agentPerformance: row.analysis.agentPerformance,
+            warnings: row.analysis.warnings || [],
+            metrics: row.analysis.metrics || [],
+            summary: row.analysis.summary,
+            complianceChecked: row.analysis.complianceChecked
+          };
+        }
+      } else {
+        // Local mode: just use DB data, never call Edge Functions
         analysis = {
           id: row.analysis.id,
           sentimentScore: row.analysis.sentimentScore,
@@ -524,6 +573,27 @@ export const fetchTranscriptionViaEdgeFunction = async (recordId: string): Promi
     throw new Error('Supabase not configured');
   }
 
+  if (disableEdgeFunctions) {
+    // Best-effort: read from DB (works only if transcription is stored unencrypted).
+    const { data, error } = await (supabase as any)
+      .from('call_records')
+      .select('transcription')
+      .eq('id', recordId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.transcription) return null;
+    if (data.transcription.encrypted && data.transcription.data) {
+      throw new Error('Local mode: transcription is encrypted and requires Edge Functions for decryption.');
+    }
+    return {
+      id: data.transcription.id,
+      text: data.transcription.text,
+      timestamp: new Date(data.transcription.timestamp),
+      language: data.transcription.language,
+      segments: data.transcription.segments || [],
+    };
+  }
+
   const { data: sessionData, error: sessionError } = await (supabase as any).auth.getSession();
   if (sessionError) throw sessionError;
   const accessToken = sessionData?.session?.access_token;
@@ -555,11 +625,74 @@ export const fetchTranscriptionViaEdgeFunction = async (recordId: string): Promi
 };
 
 /**
+ * Generate transcription via Edge Function (server-side Gemini + saves encrypted into DB).
+ * POST /functions/v1/transcription/:id
+ */
+export const generateTranscriptionViaEdgeFunction = async (recordId: string): Promise<Transcription> => {
+  if (!isSupabaseAvailable() || !supabase) {
+    throw new Error('Supabase not configured');
+  }
+  if (disableEdgeFunctions) {
+    throw new Error('Local mode: Edge Functions are disabled, cannot generate transcription.');
+  }
+
+  const { data: sessionData, error: sessionError } = await (supabase as any).auth.getSession();
+  if (sessionError) throw sessionError;
+  const accessToken = sessionData?.session?.access_token;
+  if (!accessToken) throw new Error('User not authenticated');
+
+  const fnUrl = `${supabaseUrl}/functions/v1/transcription/${recordId}`;
+  const res = await fetch(fnUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action: 'generate' }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`Failed to generate transcription: ${res.status} ${errorText}`);
+  }
+
+  const data = await res.json();
+  return {
+    id: data.id,
+    text: data.text,
+    timestamp: new Date(data.timestamp),
+    language: data.language,
+    segments: data.segments || [],
+  };
+};
+
+/**
  * Fetch analysis via Edge Function
  */
 export const fetchAnalysisViaEdgeFunction = async (recordId: string): Promise<AnalysisResult | null> => {
   if (!isSupabaseAvailable() || !supabase) {
     throw new Error('Supabase not configured');
+  }
+
+  if (disableEdgeFunctions) {
+    const { data, error } = await (supabase as any)
+      .from('call_records')
+      .select('analysis')
+      .eq('id', recordId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.analysis) return null;
+    return {
+      id: data.analysis.id,
+      sentimentScore: data.analysis.sentimentScore,
+      customerSatisfaction: data.analysis.customerSatisfaction,
+      agentPerformance: data.analysis.agentPerformance,
+      warnings: data.analysis.warnings || [],
+      metrics: data.analysis.metrics || [],
+      summary: data.analysis.summary || '',
+      complianceChecked: data.analysis.complianceChecked ?? false,
+    };
   }
 
   const { data: sessionData, error: sessionError } = await (supabase as any).auth.getSession();
@@ -580,6 +713,53 @@ export const fetchAnalysisViaEdgeFunction = async (recordId: string): Promise<An
     if (res.status === 404) return null;
     const errorText = await res.text().catch(() => '');
     throw new Error(`Failed to fetch analysis: ${res.status} ${errorText}`);
+  }
+
+  const data = await res.json();
+  return {
+    id: data.id,
+    sentimentScore: data.sentimentScore,
+    customerSatisfaction: data.customerSatisfaction,
+    agentPerformance: data.agentPerformance,
+    warnings: data.warnings || [],
+    metrics: data.metrics || [],
+    summary: data.summary || '',
+    complianceChecked: data.complianceChecked ?? false,
+  };
+};
+
+/**
+ * Generate analysis via Edge Function (server-side Gemini + saves into DB).
+ * POST /functions/v1/analysis/:id
+ */
+export const generateAnalysisViaEdgeFunction = async (recordId: string): Promise<AnalysisResult> => {
+  if (!isSupabaseAvailable() || !supabase) {
+    throw new Error('Supabase not configured');
+  }
+
+  if (disableEdgeFunctions) {
+    throw new Error('Local mode: Edge Functions are disabled, cannot generate analysis.');
+  }
+
+  const { data: sessionData, error: sessionError } = await (supabase as any).auth.getSession();
+  if (sessionError) throw sessionError;
+  const accessToken = sessionData?.session?.access_token;
+  if (!accessToken) throw new Error('User not authenticated');
+
+  const fnUrl = `${supabaseUrl}/functions/v1/analysis/${recordId}`;
+  const res = await fetch(fnUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action: 'generate' }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`Failed to generate analysis: ${res.status} ${errorText}`);
   }
 
   const data = await res.json();

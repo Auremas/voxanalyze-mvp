@@ -230,9 +230,12 @@ serve(async (req) => {
      // IBAN (LT...)
      out = out.replace(/\bLT\d{2}[A-Z0-9]{10,30}\b/gi, '[IBAN]');
 
-     // Common “Name Surname” pattern: two TitleCase words.
-     // This is intentionally conservative and only applied inside summary.
-     out = out.replace(/\b[A-ZĄČĘĖĮŠŲŪŽ][a-ząčęėįšųūž]+ [A-ZĄČĘĖĮŠŲŪŽ][a-ząčęėįšųūž]+\b/g, '[VARDAS PAVARDĖ]');
+     // Personal names (Name Surname pattern) - but NOT clinic/hospital names
+     // Common clinic/hospital name patterns to preserve:
+     // - Single capitalized words (Kardiolita, Santara)
+     // - "X ligoninė", "X klinika", "X centras"
+     // We only redact if it looks like a personal name (two words, both capitalized, not followed by "ligoninė", "klinika", etc.)
+     out = out.replace(/\b([A-ZĄČĘĖĮŠŲŪŽ][a-ząčęėįšųūž]+) ([A-ZĄČĘĖĮŠŲŪŽ][a-ząčęėįšųūž]+)(?!\s+(ligoninė|klinika|centras|įmonė|organizacija|bendrovė|fondas))\b/g, '[VARDAS PAVARDĖ]');
 
      // Collapse multiple spaces created by replacements
      out = out.replace(/\s{2,}/g, ' ').trim();
@@ -319,7 +322,17 @@ serve(async (req) => {
 
     // Guardrail to avoid Supabase Edge worker-limit (546) crashes for large uploads.
     // We convert audio -> base64 (adds ~33%) and keep multiple copies in memory.
-    const MAX_AUDIO_BYTES = 12 * 1024 * 1024; // 12MB
+    const MAX_AUDIO_BYTES = 8 * 1024 * 1024; // 8MB (reduced to prevent 546 errors)
+    
+    // Timeout guardrail: Supabase Edge Functions have ~150s timeout
+    // Fail fast if we're approaching the limit (120s = 80% of 150s)
+    const MAX_EXECUTION_TIME_MS = 120 * 1000; // 120 seconds
+    const checkTimeout = () => {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > MAX_EXECUTION_TIME_MS) {
+        throw new Error(`Edge Function timeout guardrail: processing took ${Math.round(elapsed / 1000)}s (limit: ${MAX_EXECUTION_TIME_MS / 1000}s). File may be too large or processing too slow.`);
+      }
+    };
     if (audioFile.size > MAX_AUDIO_BYTES) {
       return new Response(
         JSON.stringify({
@@ -330,16 +343,6 @@ serve(async (req) => {
       );
     }
 
-    // Convert file to base64 (binary-safe, avoids stack overflows)
-    // #region agent log
-    console.log(JSON.stringify({location:'upload/index.ts:186',message:'Before base64 conversion',data:{elapsed:Date.now()-startTime},timestamp:Date.now(),sessionId:'debug-session',runId:'run-edge-fn',hypothesisId:'H2'}));
-    // #endregion agent log
-    const arrayBuffer = await audioFile.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const base64Audio = encodeBase64(uint8Array);
-    // #region agent log
-    console.log(JSON.stringify({location:'upload/index.ts:189',message:'After base64 conversion',data:{base64Length:base64Audio.length,elapsed:Date.now()-startTime},timestamp:Date.now(),sessionId:'debug-session',runId:'run-edge-fn',hypothesisId:'H2'}));
-    // #endregion agent log
     const mimeType = audioFile.type || 'audio/mpeg';
 
     // Create initial record with user_id
@@ -372,10 +375,12 @@ serve(async (req) => {
     console.log(`✅ Record saved with ID: ${recordId}`);
 
     // Upload audio file to Supabase Storage
+    // IMPORTANT: keep path deterministic so other functions can download it later without extra DB columns.
     try {
-      const fileExt = audioFile.name.split('.').pop();
-      const fileName = `${audioId}-${Date.now()}.${fileExt}`;
-      const filePath = `audio-files/${fileName}`;
+      const safeName = String(audioFile.name || 'audio')
+        .replace(/[^\w.\-]+/g, '_')
+        .slice(0, 120);
+      const filePath = `audio-files/${recordId}-${safeName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('audio-files')
@@ -394,15 +399,61 @@ serve(async (req) => {
       console.warn('Storage upload error:', storageError);
     }
 
+    // Default behavior: do NOT run Gemini during upload. This avoids 546/504 almost entirely.
+    // Enable if you explicitly want transcription during upload.
+    const RUN_TRANSCRIPTION_ON_UPLOAD =
+      (Deno.env.get('RUN_TRANSCRIPTION_ON_UPLOAD') ?? '').toLowerCase() === 'true';
+
+    if (!RUN_TRANSCRIPTION_ON_UPLOAD) {
+      await supabase
+        .from('call_records')
+        .update({ status: 'uploaded' })
+        .eq('id', recordId);
+
+      return new Response(
+        JSON.stringify({
+          id: recordId,
+          audio: {
+            id: audioId,
+            fileName: audioFile.name,
+            uploadDate: new Date().toISOString(),
+            format: mimeType,
+            size: audioFile.size,
+          },
+          status: 'uploaded',
+          transcription: null,
+          analysis: null,
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        }
+      );
+    }
+
+    // Convert file to base64 (binary-safe, avoids stack overflows)
+    // #region agent log
+    console.log(JSON.stringify({location:'upload/index.ts:186',message:'Before base64 conversion',data:{elapsed:Date.now()-startTime},timestamp:Date.now(),sessionId:'debug-session',runId:'run-edge-fn',hypothesisId:'H2'}));
+    // #endregion agent log
+    const arrayBuffer = await audioFile.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const base64Audio = encodeBase64(uint8Array);
+    // #region agent log
+    console.log(JSON.stringify({location:'upload/index.ts:189',message:'After base64 conversion',data:{base64Length:base64Audio.length,elapsed:Date.now()-startTime},timestamp:Date.now(),sessionId:'debug-session',runId:'run-edge-fn',hypothesisId:'H2'}));
+    // #endregion agent log
+
+    // Check timeout before starting transcription
+    checkTimeout();
+    
     // Call Gemini API for transcription
     console.log('🎤 Starting transcription...');
     // #region agent log
     console.log(JSON.stringify({location:'upload/index.ts:267',message:'Before transcription API call',data:{elapsed:Date.now()-startTime,base64Length:base64Audio.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run-edge-fn',hypothesisId:'H3'}));
     // #endregion agent log
     
-    // Try stable models in order: fastest first, then more capable fallbacks.
-    // Avoid preview-only model IDs here (can cause hard failures).
-    const transcriptionModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash-exp'];
+    // IMPORTANT: To avoid 504/546 timeouts, do NOT try multiple slow models here.
+    // Use the fastest stable model and retry a few times on transient upstream issues.
+    const transcriptionModels = ['gemini-2.5-flash'];
     let transcriptionResponse: Response | null = null;
     let transcriptionModel = '';
     let transcriptionError: any = null;
@@ -470,12 +521,13 @@ PRIEŠINGAI NEGALIMA:
           }
         });
 
-        // Retry on transient overload (503) once before switching models (reduced from 3 to avoid timeouts).
-        const maxAttemptsPerModel = 1;
+        // User requested 3 attempts of trying Gemini model (same model).
+        // Keep backoff small so we don't burn the full Edge timeout.
+        const maxAttemptsPerModel = 3;
         for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
           if (attempt > 0) {
-            const wait = backoffMs(attempt - 1);
-            console.warn(`⏳ Gemini overloaded? retrying transcription model ${model} in ${wait}ms (attempt ${attempt + 1}/${maxAttemptsPerModel})`);
+            const wait = Math.min(2000, 600 * Math.pow(2, attempt - 1)); // 600ms, 1200ms
+            console.warn(`⏳ Retrying transcription model ${model} in ${wait}ms (attempt ${attempt + 1}/${maxAttemptsPerModel})`);
             await sleep(wait);
           }
 
@@ -515,10 +567,7 @@ PRIEŠINGAI NEGALIMA:
               status,
             );
             console.warn(`⚠️ Gemini OVERLOADED for model ${model} (${status}): ${message}`);
-            // try again (retry loop continues). If last attempt, we'll fall through and try next model.
-            if (attempt === maxAttemptsPerModel - 1) {
-              console.warn(`⚠️ Giving up retries for model ${model} due to overload, trying next model...`);
-            }
+            // retry loop continues
             continue;
           }
 
@@ -530,12 +579,12 @@ PRIEŠINGAI NEGALIMA:
             console.error(`❌ QUOTA/RATE LIMIT for model ${model} (${status}): ${message}`);
             console.error(`❌ Gemini error (first 500 chars): ${raw.substring(0, 500)}`);
             transcriptionResponse = null;
-            break; // further models won't help if quota/key exhausted
+            break; // further retries won't help if quota/key exhausted
           }
 
-          // Non-transient error: break retry loop and try next model.
+          // Non-transient error: break retry loop (no other models in this config).
           transcriptionError = new Error(`Model ${model} failed (${status}): ${message || transcriptionResponse.statusText}`);
-          console.warn(`❌ Model ${model} failed (${status}), trying next model...`);
+          console.warn(`❌ Model ${model} failed (${status})`);
           transcriptionResponse = null;
           break;
         }
@@ -877,18 +926,48 @@ PRIEŠINGAI NEGALIMA:
       .from('call_records')
       .update({
         transcription: transcriptionResultForDB,
-        status: 'analyzing',
+        // Default: finish quickly after transcription to avoid 504/546.
+        // If analysis is needed, generate it separately (or enable RUN_ANALYSIS_ON_UPLOAD).
+        status: 'completed',
       })
       .eq('id', recordId);
 
-    // Call Gemini API for analysis
+    const RUN_ANALYSIS_ON_UPLOAD =
+      (Deno.env.get('RUN_ANALYSIS_ON_UPLOAD') ?? '').toLowerCase() === 'true';
+
+    if (!RUN_ANALYSIS_ON_UPLOAD) {
+      return new Response(
+        JSON.stringify({
+          id: recordId,
+          audio: {
+            id: audioId,
+            fileName: audioFile.name,
+            uploadDate: new Date().toISOString(),
+            format: mimeType,
+            size: audioFile.size,
+          },
+          status: 'completed',
+          transcription: rawTranscriptionForStorage,
+          analysis: null,
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200,
+        }
+      );
+    }
+
+    // Check timeout before starting analysis
+    checkTimeout();
+    
+    // Call Gemini API for analysis (optional)
     console.log('📊 Starting analysis...');
     // #region agent log
     console.log(JSON.stringify({location:'upload/index.ts:585',message:'Before analysis API call',data:{elapsed:Date.now()-startTime,fullTextLength:fullText.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run-edge-fn',hypothesisId:'H3'}));
     // #endregion agent log
     
-     // Analysis is text-only; use stable text-capable models.
-     const analysisModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash-exp'];
+    // Keep analysis fast (single model) to reduce 504/546.
+    const analysisModels = ['gemini-2.5-flash'];
     let analysisResponse: Response | null = null;
     let analysisModel = '';
     let analysisError: any = null;
@@ -1244,12 +1323,15 @@ Grąžink JSON su šiais laukais:
     
     const isQuota = error instanceof UpstreamQuotaError;
     const isOverloaded = error instanceof UpstreamOverloadedError;
-    const status = isQuota ? 429 : (isOverloaded ? 503 : 500);
+    const isTimeout = error instanceof Error && error.message.includes('timeout guardrail');
+    const status = isQuota ? 429 : (isOverloaded ? 503 : (isTimeout ? 546 : 500));
     const hint = isQuota
       ? 'Gemini API kvotos limitas. Palaukite 1-2 minutes ir bandykite dar kartą, arba patikrinkite Gemini API kvotą/billing.'
       : (isOverloaded
           ? 'Gemini modelis šiuo metu perkrautas. Palaukite kelias minutes ir bandykite dar kartą.'
-          : 'Check Supabase Dashboard → Functions → upload → Logs for detailed error information');
+          : (isTimeout
+              ? 'Edge Function pasiekė laiko limitą. Failas per didelis arba apdorojimas užtruko per ilgai. Pabandykite:\n- Trumpesnį/mažesnį audio failą (maks. 8MB)\n- Mažesnę kokybę (pvz. 64kbps)\n- Pakartoti po kelių minučių'
+              : 'Check Supabase Dashboard → Functions → upload → Logs for detailed error information'));
 
     return new Response(
       JSON.stringify({ 

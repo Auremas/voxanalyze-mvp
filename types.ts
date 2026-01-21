@@ -42,7 +42,7 @@ export interface CallRecord {
   audio: AudioFile;
   transcription?: Transcription;
   analysis?: AnalysisResult;
-  status: 'pending' | 'transcribing' | 'analyzing' | 'completed' | 'error';
+  status: 'pending' | 'uploaded' | 'transcribing' | 'analyzing' | 'completed' | 'error';
   error?: string;
   progress?: number; // 0-100 for progress bar
   stage?: 'uploading' | 'transcribing' | 'analyzing' | 'complete'; // Current processing stage

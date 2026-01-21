@@ -23,7 +23,7 @@ import Dashboard from './components/Dashboard';
 import Login from './components/Login';
 import { SecurityAudit } from './components/SecurityAudit';
 import { CallRecord } from './types';
-import { fetchCallRecords, deleteCallRecord, checkSupabaseConnection, uploadAndProcessViaEdgeFunction } from './services/supabaseService';
+import { fetchCallRecords, deleteCallRecord, checkSupabaseConnection, uploadAndProcessViaEdgeFunction, generateAnalysisViaEdgeFunction, generateTranscriptionViaEdgeFunction } from './services/supabaseService';
 import { getCurrentUser, onAuthStateChange, signOut, User, getUserRole } from './services/authService';
 
 function NavItem({ icon, label, active, onClick, disabled = false }: any) {
@@ -65,6 +65,8 @@ export default function App() {
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ total: 0, completed: 0, failed: 0 });
+  const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false);
+  const [isGeneratingTranscription, setIsGeneratingTranscription] = useState(false);
 
   // Auth effect
   useEffect(() => {
@@ -207,43 +209,32 @@ export default function App() {
     let recordId: string | null = null;
 
     try {
-      // SECURITY: Do ALL Gemini work server-side via Supabase Edge Function `upload`
-      const completedRecord = await uploadAndProcessViaEdgeFunction(file);
-      recordId = completedRecord.id || null;
-      
-      // Clear progress interval
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
-      
-      // NOTE: Storage upload happens inside the Edge Function `upload` already.
-      // Doing it here would upload the same file twice.
+      // Upload only (fast, stable). User triggers transcription+analysis by buttons.
+      const uploadedRecord = await uploadAndProcessViaEdgeFunction(file);
+      recordId = uploadedRecord.id || null;
 
-      // Save in UI history (Edge Function already saved the DB record)
+      // Stop simulated progress after upload
+      if (progressInterval) clearInterval(progressInterval);
+
       if (!skipUIUpdate) {
-        // Set to 100% complete
-        setCurrentRecord({ ...completedRecord, progress: 100, stage: 'complete' });
-        // After a brief moment, remove progress indicators
-        setTimeout(() => {
-          setCurrentRecord(completedRecord);
-          // Prevent duplicates by checking if record with same ID already exists
-          setHistory(prev => {
-            const existingIds = new Set(prev.map(r => r.id).filter(Boolean));
-            // Only add if it doesn't already exist
-            if (completedRecord.id && existingIds.has(completedRecord.id)) {
-              // Update existing record instead of adding duplicate
-              return prev.map(r => r.id === completedRecord.id ? completedRecord : r);
-            }
-            return [completedRecord, ...prev.filter(r => r.id !== completedRecord.id)].slice(0, 50);
-          });
-        }, 1000);
+        // Briefly show "uploaded" completion, then show the record (with buttons to continue)
+        setCurrentRecord({ ...uploadedRecord, progress: 100, stage: 'complete' });
+        setTimeout(() => setCurrentRecord(uploadedRecord), 400);
+
+        setHistory(prev => {
+          const existingIds = new Set(prev.map(r => r.id).filter(Boolean));
+          if (uploadedRecord.id && existingIds.has(uploadedRecord.id)) {
+            return prev.map(r => r.id === uploadedRecord.id ? uploadedRecord : r);
+          }
+          return [uploadedRecord, ...prev.filter(r => r.id !== uploadedRecord.id)].slice(0, 50);
+        });
       }
-      
+
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/c367620c-4d11-4919-8fb3-80711e3854de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:237',message:'handleUpload completed',data:{fileName:file.name,recordId,skipUIUpdate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7242/ingest/c367620c-4d11-4919-8fb3-80711e3854de',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:237',message:'handleUpload completed (upload-only)',data:{fileName:file.name,recordId,skipUIUpdate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
       // #endregion
-      
-      return completedRecord;
+
+      return uploadedRecord;
     } catch (err: any) {
       console.error(err);
       
@@ -270,6 +261,40 @@ export default function App() {
     } finally {
       // Release in-flight lock
       try { inFlight.delete(uploadKey); } catch {}
+    }
+  };
+
+  const handleGenerateAnalysis = async () => {
+    if (!currentRecord?.id) return;
+    try {
+      setIsGeneratingAnalysis(true);
+      const analysis = await generateAnalysisViaEdgeFunction(currentRecord.id);
+      // Update current record in UI
+      setCurrentRecord(prev => prev ? { ...prev, analysis, status: 'completed' } : prev);
+      // Refresh history to include newly generated analysis
+      const updatedHistory = await fetchCallRecords(50);
+      setHistory(updatedHistory);
+    } catch (e: any) {
+      console.error('Failed to generate analysis:', e);
+      alert(`Nepavyko sugeneruoti analizės: ${e?.message || e}`);
+    } finally {
+      setIsGeneratingAnalysis(false);
+    }
+  };
+
+  const handleGenerateTranscription = async () => {
+    if (!currentRecord?.id) return;
+    try {
+      setIsGeneratingTranscription(true);
+      const transcription = await generateTranscriptionViaEdgeFunction(currentRecord.id);
+      setCurrentRecord(prev => prev ? { ...prev, transcription, status: 'completed' } : prev);
+      const updatedHistory = await fetchCallRecords(50);
+      setHistory(updatedHistory);
+    } catch (e: any) {
+      console.error('Failed to generate transcription:', e);
+      alert(`Nepavyko sugeneruoti transkripcijos: ${e?.message || e}`);
+    } finally {
+      setIsGeneratingTranscription(false);
     }
   };
 
@@ -303,7 +328,7 @@ export default function App() {
           reader.readAsDataURL(file);
         });
         
-        // Process each file using existing handleUpload, but skip UI updates
+        // Process each file using existing handleUpload (upload -> transcribe -> analyze), but skip UI updates
         // This prevents race conditions where multiple files update the same state
         const result = await handleUpload(file, base64, true); // true = skipUIUpdate
         
@@ -453,7 +478,14 @@ export default function App() {
             )}
 
             {activeTab === 'dashboard' && currentRecord && (
-              <Dashboard record={currentRecord} />
+              <Dashboard
+                record={currentRecord}
+                onGenerateAnalysis={handleGenerateAnalysis}
+                isGeneratingAnalysis={isGeneratingAnalysis}
+                // optional hook for upload-only mode
+                onGenerateTranscription={handleGenerateTranscription as any}
+                isGeneratingTranscription={isGeneratingTranscription as any}
+              />
             )}
 
             {activeTab === 'security' && userRole === 'admin' && (
@@ -549,7 +581,9 @@ export default function App() {
                           <div className="flex items-center gap-8">
                             <div className="text-right">
                               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sentimentas</p>
-                              <p className="font-black text-indigo-600 text-lg">{h.analysis?.sentimentScore}%</p>
+                            <p className="font-black text-indigo-600 text-lg">
+                              {typeof h.analysis?.sentimentScore === 'number' ? `${h.analysis.sentimentScore}%` : '—'}
+                            </p>
                             </div>
                             {h.id && (
                               <button

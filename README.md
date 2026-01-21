@@ -20,12 +20,17 @@ npm install
 
 2. **Set up environment:**
 ```bash
-# Copy the example file
-cp .env.example .env.local
+# Create `.env.local` (this repo may not include `.env.example`):
+# Windows PowerShell:
+notepad .env.local
 
-# Edit .env.local and add your Supabase anon key:
-# - Get it from: Supabase Dashboard → Settings → API → anon public
-# - Replace "your-anon-key-here" with your actual key
+# Put these values inside `.env.local`:
+#
+# VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
+# VITE_SUPABASE_ANON_KEY=<your-anon-public-key>
+#
+# Optional (local UI-only mode, no Edge Function calls):
+# VITE_DISABLE_EDGE_FUNCTIONS=true
 ```
 
 3. **Start local development:**
@@ -57,7 +62,16 @@ Access at: `http://localhost:5173`
 - `npm run supabase:start` - Start local Supabase
 - `npm run supabase:stop` - Stop local Supabase
 
-## Deployment
+## Local mode without Edge Functions (UI-only)
+
+If you want to run the app locally **without starting Edge Functions**, set:
+
+- `VITE_DISABLE_EDGE_FUNCTIONS=true`
+
+Behavior in this mode:
+- **Upload+processing is disabled** (transcription+analysis requires Edge Functions).
+- **Analysis is read directly** from the `call_records` table.
+- **Transcription will only show if it’s unencrypted** (encrypted rows require Edge Functions for decryption).
 
 ### Backend (Supabase)
 ```bash
